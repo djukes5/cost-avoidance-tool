@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Cost Avoidance Tool</title>
+
+<style>
+body {
+  font-family: -apple-system, BlinkMacSystemFont, Arial, sans-serif;
+  margin: 16px;
+}
+h1 { font-size: 20px; margin-bottom: 6px; }
+.small { font-size: 12px; color: #666; }
+label { display:block; margin-top:10px; font-weight:600; }
+input, select, textarea, button {
+  width:100%; padding:10px; margin-top:6px; box-sizing:border-box;
+}
+textarea { resize: vertical; }
+.row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.card {
+  border:1px solid #ddd; border-radius:10px; padding:12px; margin-top:14px;
+}
+.btn {
+  background:#0a84ff; color:white; border:none;
+  border-radius:10px; padding:12px; font-weight:600;
+}
+.btn.secondary { background:#e5e5ea; color:#000; }
+.output { font-weight:700; margin-top:10px; }
+hr { border:none; border-top:1px solid #eee; margin:14px 0; }
+</style>
+</head>
+
+<body>
+
+<h1>Cost Avoidance Tool</h1>
+<p class="small">Local-only. Market costs are estimates. Google queries are stored for transparency.</p>
+
+<div class="card">
+  <label>Date</label>
+  <input type="date" id="date">
+
+  <label>Job Category</label>
+  <select id="category">
+    <option>Plumbing</option>
+    <option>Electrical</option>
+    <option>HVAC</option>
+    <option>Carpentry</option>
+    <option>Concrete</option>
+    <option>Painting</option>
+    <option>Pressure Washing</option>
+    <option>General Repair</option>
+  </select>
+
+  <label>Job Description</label>
+  <textarea id="desc" rows="3"></textarea>
+
+  <label>Location (City / State / ZIP)</label>
+  <input id="location">
+
+  <div class="row">
+    <div>
+      <label>Materials Cost ($)</label>
+      <input id="materials" type="number" step="0.01">
+    </div>
+    <div>
+      <label>Labor Hours</label>
+      <input id="hours" type="number" step="0.1">
+    </div>
+  </div>
+
+  <label>Internal Labor Rate ($/hr)</label>
+  <input id="rate" type="number" value="18.50" step="0.01">
+
+  <hr>
+
+  <label>Market Cost Range (Total Job)</label>
+  <div class="row">
+    <input id="mLow" type="number" placeholder="Market Low">
+    <input id="mHigh" type="number" placeholder="Market High">
+  </div>
+
+  <div class="row" style="margin-top:10px;">
+    <button class="btn secondary" onclick="openGoogleCostSearch()">
+      Google: Job Cost Range
+    </button>
+    <button class="btn secondary" onclick="copyGoogleQuery()">
+      Copy Google Query
+    </button>
+  </div>
+
+  <label>Source Notes</label>
+  <input id="sourceNotes" readonly>
+
+  <label>Google Link</label>
+  <input id="sourceUrl" readonly>
+
+  <button class="btn" onclick="calculate()">
+    Calculate
+  </button>
+
+  <div class="output" id="output"></div>
+</div>
+
+<script>
+function buildGoogleQuery() {
+  const cat = document.getElementById("category").value;
+  const desc = document.getElementById("desc").value;
+  const loc = document.getElementById("location").value;
+  return `${cat} ${desc} ${loc} average cost range`;
+}
+
+function openGoogleCostSearch() {
+  const q = buildGoogleQuery();
+  const url = "https://www.google.com/search?q=" + encodeURIComponent(q);
+  document.getElementById("sourceNotes").value =
+    `Google query used: "${q}"`;
+  document.getElementById("sourceUrl").value = url;
+  window.open(url, "_blank");
+}
+
+function copyGoogleQuery() {
+  navigator.clipboard.writeText(buildGoogleQuery());
+}
+
+function calculate() {
+  const materials = parseFloat(document.getElementById("materials").value || 0);
+  const hours = parseFloat(document.getElementById("hours").value || 0);
+  const rate = parseFloat(document.getElementById("rate").value || 0);
+  const mLow = parseFloat(document.getElementById("mLow").value || 0);
+  const mHigh = parseFloat(document.getElementById("mHigh").value || 0);
+
+  const actual = materials + (hours * rate);
+  const sLow = mLow - actual;
+  const sHigh = mHigh - actual;
+
+  document.getElementById("output").textContent =
+    `Actual Cost: $${actual.toFixed(2)} | Savings Range: $${sLow.toFixed(2)} – $${sHigh.toFixed(2)}`;
+}
+</script>
+
+</body>
+</html>
