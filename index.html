@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cost Avoidance Tool</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, Arial, sans-serif; margin: 16px; }
+    h1 { font-size: 20px; margin: 0 0 6px 0; }
+    .small { font-size: 12px; color: #666; margin: 0 0 12px 0; }
+    label { display:block; margin-top:10px; font-weight:600; }
+    input, select, textarea, button { width:100%; padding:10px; margin-top:6px; box-sizing: border-box; }
+    textarea { resize: vertical; }
+    .row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    .card { border:1px solid #ddd; border-radius:10px; padding:12px; margin-top:14px; }
+    .btn { background:#0a84ff; color:white; border:none; border-radius:10px; padding:12px; font-weight:600; }
+    .btn.secondary { background:#e5e5ea; color:#000; font-weight:600; }
+    .output { font-weight:700; margin-top:10px; }
+    img.preview { max-width:100%; margin-top:8px; border:1px solid #ccc; border-radius:8px; display:none; }
+    hr { border: none; border-top: 1px solid #eee; margin: 14px 0; }
+    table { width:100%; border-collapse: collapse; margin-top: 10px; }
+    th, td { border-bottom: 1px solid #eee; padding: 8px 6px; font-size: 12px; }
+    th { text-align: left; }
+    td { text-align: right; }
+    td.left { text-align: left; }
+    .pill { display:inline-block; padding:2px 8px; border:1px solid #ddd; border-radius:999px; font-size:12px; color:#333; }
+    .mutedInput { background:#f7f7f7; }
+    a { color:#0a84ff; word-break: break-word; }
+  </style>
+</head>
+<body>
+  <h1>Cost Avoidance Tool</h1>
+  <p class="small">Local-only. Dictate into any field using the iPhone microphone. Receipt photos are stored on device with each entry.</p>
+
+  <div class="card">
+    <label>Date</label>
+    <input type="date" id="date" />
+
+    <label>Job Category</label>
+    <select id="category">
+      <option>Plumbing</option>
+      <option>Electrical</option>
+      <option>HVAC</option>
+      <option>Carpentry</option>
+      <option>Concrete</option>
+      <option>Painting</option>
+      <option>Pressure Washing</option>
+      <option>General Repair</option>
+    </select>
+
+    <label>Job Description</label>
+    <textarea id="desc" rows="3" placeholder="Describe completed work (you can dictate)."></textarea>
+
+    <label>Location (City, State or ZIP)</label>
+    <input id="location" placeholder="Smyrna, GA" />
+
+    <div class="row">
+      <div>
+        <label>Materials Cost ($)</label>
+        <input id="materials" type="number" step="0.01" inputmode="decimal" />
+      </div>
+      <div>
+        <label>Labor Hours</label>
+        <input id="hours" type="number" step="0.1" inputmode="decimal" />
+      </div>
+    </div>
+
+    <label>Internal Labor Rate ($/hr)</label>
+    <input id="rate" type="number" step="0.01" inputmode="decimal" value="18.50" />
+
+    <label>Attach Receipt Photo (optional)</label>
+    <input type="file" id="receipt" accept="image/*" />
+    <img id="preview" class="preview" alt="Receipt preview" />
+
+    <hr />
+
+    <label>Market Cost Range (Total Job)</label>
+    <div class="row">
+      <input id="mLow" type="number" step="0.01" inputmode="decimal" placeholder="Market Low ($)" />
+      <input id="mHigh" type="number" step="0.01" inputmode="decimal" placeholder="Market High ($)" />
+    </div>
+
+    <div class="row" style="margin-top:10px;">
+      <button class="btn secondary" type="button" onclick="openGoogleCostSearch()">Google: Job Cost Range</button>
+      <button class="btn secondary" type="button" onclick="copyGoogleQuery()">Copy Google Query</button>
+    </div>
+
+    <label>Source Notes (auto)</label>
+    <input id="sourceNotes" class="mutedInput" readonly placeholder="Auto-filled when you run Google search" />
+
+    <label>Google Link (auto)</label>
+    <input id="sourceUrl" class="mutedInput" readonly placeholder="Auto-filled when you run Google search" />
+
+    <button class="btn" type="button" onclick="calculateAndSave()" style="margin-top:10px;">Calculate &amp; Save</button>
+
+    <div class="output" id="out"></div>
+    <div class="small" id="outSub"></div>
+  </div>
+
+  <div class="card">
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
+      <h2 style="font-size:16px; margin:0;">Running Totals</h2>
+      <span class="pill" id="countPill">0 entries</span>
+    </div>
+    <div style="margin-top:10px;" id="totals"></div>
+
+    <div class="row" style="margin-top:10px;">
+      <button class="btn secondary" type="button" onclick="exportCSV()">Export CSV</button>
+      <button class="btn secondary" type="button" onclick="exportJSON()">Export Backup</button>
+    </div>
+
+    <div class="row" style="margin-top:10px;">
+      <button class="btn secondary" type="button" onclick="importJSON()">Import Backup</button>
+      <button class="btn secondary" type="button" onclick="clearAll()">Clear All Data</button>
+    </div>
+
+    <div class="small" style="margin-top:10px;">
+      Notes: Market costs are estimates/ranges. Savings are cost avoidance, not guaranteed contractor quotes.
+    </div>
+  </div>
+
+  <div class="card">
+    <h2 style="font-size:16px; margin:0;">Recent Entries</h2>
+    <div class="small" style="margin-top:6px;">Tap “Export Backup” to preserve everything (including receipt photos).</div>
+    <div id="recent"></div>
+  </div>
+
+<script>
+  // IMPORTANT: keep KEY unchanged so existing device data stays.
+  const KEY = "cost_avoidance_entries_v1";
+  let receiptData = null;
+
+  const el = (id) => document.getElementById(id);
+
+  (function init(){
+    const d = new Date();
+    el("date").value = d.toISOString().slice(0,10);
+    updateDashboard();
+  })();
+
+  el("receipt").addEventListener("change", function(){
+    const file = this.files && this.files[0];
+    if(!file){ receiptData = null; el("preview").style.display = "none"; return; }
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      receiptData = e.target.result;
+      el("preview").src = receiptData;
+      el("preview").style.display = "block";
+    };
+    reader.readAsDataURL(file);
+  });
+
+  function buildGoogleQuery(){
+    const cat = (el("category").value || "").trim();
+    const desc = (el("desc").value || "").trim();
+    const loc = (el("location").value || "").trim();
+    return `${cat} ${desc} ${loc} average cost range`.replace(/\s+/g, " ").trim();
+  }
+
+  function openGoogleCostSearch(){
+    const q = buildGoogleQuery();
+    const url = `https://www.google.com/search?q=${encodeURIComponent(q)}`;
+    const today = new Date().toISOString().slice(0,10);
+
+    el("sourceNotes").value = `Google query: "${q}" (run on ${today})`;
+    el("sourceUrl").value = url;
+
+    window.open(url, "_blank");
+  }
+
+  async function copyGoogleQuery(){
+    const q = buildGoogleQuery();
+    try{
+      await navigator.clipboard.writeText(q);
+      el("outSub").textContent = "Google query copied to clipboard.";
+    }catch{
+      el("sourceNotes").value = `Google query: "${q}" (copy manually if needed)`;
+      el("sourceNotes").focus();
+      el("sourceNotes").select();
+      el("outSub").textContent = "Select text and copy (clipboard may be restricted).";
+    }
+  }
+
+  function readList(){
+    try { return JSON.parse(localStorage.getItem(KEY) || "[]"); }
+    catch { return []; }
+  }
+
+  function writeList(list){
+    localStorage.setItem(KEY, JSON.stringify(list));
+  }
+
+  function money(n){
+    if (!isFinite(n)) return "0.00";
+    return Number(n).toFixed(2);
+  }
+
+  function calculateAndSave(){
+    const materials = parseFloat(el("materials").value || "0");
+    const hours = parseFloat(el("hours").value || "0");
+    const rate = parseFloat(el("rate").value || "0");
+
+    const mLow = parseFloat(el("mLow").value || "0");
+    const mHigh = parseFloat(el("mHigh").value || "0");
+
+    const actual = materials + (hours * rate);
+
+    const sLow = mLow - actual;
+    const sHigh = mHigh - actual;
+    const sTypical = (sLow + sHigh) / 2;
+
+    const entry = {
+      id: cryptoRandomId(),
+      date: el("date").value || new Date().toISOString().slice(0,10),
+      category: el("category").value,
+      desc: el("desc").value || "",
+      location: el("location").value || "",
+      materials,
+      hours,
+      rate,
+      actual,
+      market_low: mLow,
+      market_high: mHigh,
+      savings_low: sLow,
+      savings_high: sHigh,
+      savings_typical: sTypical,
+      source_notes: el("sourceNotes").value || "",
+      source_url: el("sourceUrl").value || "",
+      receipt: receiptData
+    };
+
+    const list = readList();
+    list.push(entry);
+    writeList(list);
+
+    el("out").textContent =
+      `Actual: $${money(actual)} | Savings Range: $${money(sLow)} – $${money(sHigh)} (Typical ~$${money(sTypical)})`;
+    el("outSub").textContent = "Saved to this phone. (History stays available offline.)";
+
+    receiptData = null;
+    el("receipt").value = "";
+    el("preview").style.display = "none";
+
+    updateDashboard();
+  }
+
+  function updateDashboard(){
+    const list = readList();
+    el("countPill").textContent = `${list.length} entr${list.length===1?"y":"ies"}`;
+
+    const now = new Date();
+    const startOfWeek = startOfDay(new Date(now.getFullYear(), now.getMonth(), now.getDate() - ((now.getDay()+6)%7)));
+    const startOfMonth = startOfDay(new Date(now.getFullYear(), now.getMonth(), 1));
+    const startOfYear = startOfDay(new Date(now.getFullYear(), 0, 1));
+
+    let week=0, month=0, year=0, spendMonth=0;
+
+    for(const e of list){
+      const d = startOfDay(new Date(e.date));
+      if(d >= startOfWeek) week += (e.savings_typical || 0);
+      if(d >= startOfMonth) { month += (e.savings_typical || 0); spendMonth += (e.materials || 0); }
+      if(d >= startOfYear) year += (e.savings_typical || 0);
+    }
+
+    el("totals").innerHTML = `
+      <table>
+        <tr><th>Range</th><th>Typical Savings</th><th>Materials Spend (Month)</th></tr>
+        <tr><td class="left">This Week</td><td>$${money(week)}</td><td class="left" rowspan="3" style="text-align:right;">$${money(spendMonth)}</td></tr>
+        <tr><td class="left">This Month</td><td>$${money(month)}</td></tr>
+        <tr><td class="left">This Year</td><td>$${money(year)}</td></tr>
+      </table>
+    `;
+
+    renderRecent(list);
+  }
+
+  function renderRecent(list){
+    const recent = [...list].slice(-5).reverse();
+    if(!recent.length){
+      el("recent").innerHTML = `<div class="small" style="margin-top:10px;">No entries yet.</div>`;
+      return;
+    }
+
+    let html = `<table>
+      <tr>
+        <th>Date</th><th>Category</th><th>Actual</th><th>Typical Savings</th><th>Receipt</th><th>Source</th>
+      </tr>`;
+
+    for(const e of recent){
+      const hasLink = e.source_url && String(e.source_url).startsWith("http");
+      html += `<tr>
+        <td class="left">${escapeHtml(e.date || "")}</td>
+        <td class="left">${escapeHtml(e.category || "")}</td>
+        <td>$${money(e.actual || 0)}</td>
+        <td>$${money(e.savings_typical || 0)}</td>
+        <td class="left">${e.receipt ? `<button class="btn secondary" type="button" onclick="viewReceipt('${e.id}')">View</button>` : `<span class="small">—</span>`}</td>
+        <td class="left">${hasLink ? `<a href="${escapeHtml(e.source_url)}" target="_blank">Google</a>` : `<span class="small">—</span>`}</td>
+      </tr>`;
+    }
+
+    html += `</table>`;
+    el("recent").innerHTML = html;
+  }
+
+  function viewReceipt(id){
+    const list = readList();
+    const e = list.find(x => x.id === id);
+    if(!e || !e.receipt){ alert("No receipt attached."); return; }
+
+    const w = window.open("", "_blank");
+    w.document.write(`<title>Receipt</title><meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <img src="${e.receipt}" style="max-width:100%;height:auto;display:block;margin:0 auto;">`);
+    w.document.close();
+  }
+
+  function exportCSV(){
+    const list = readList();
+    if(!list.length){ alert("No data to export."); return; }
+
+    const cols = ["date","category","desc","location","materials","hours","rate","actual","market_low","market_high","savings_low","savings_high","savings_typical","source_notes","source_url"];
+    const header = cols.join(",");
+    const rows = list.map(e => cols.map(c => csvCell(e[c])).join(","));
+    const csv = [header, ...rows].join("\n");
+
+    downloadBlob(csv, "text/csv", "cost_avoidance.csv");
+  }
+
+  function exportJSON(){
+    const list = readList();
+    const blob = JSON.stringify({ exported_at: new Date().toISOString(), entries: list }, null, 2);
+    downloadBlob(blob, "application/json", "cost_avoidance_backup.json");
+  }
+
+  function importJSON(){
+    const inp = document.createElement("input");
+    inp.type = "file";
+    inp.accept = "application/json";
+    inp.onchange = () => {
+      const f = inp.files && inp.files[0];
+      if(!f) return;
+      const r = new FileReader();
+      r.onload = (e) => {
+        try{
+          const data = JSON.parse(e.target.result);
+          const incoming = (data && data.entries) ? data.entries : [];
+          if(!Array.isArray(incoming)) throw new Error("Invalid file");
+
+          const current = readList();
+          const merged = mergeEntries(current, incoming);
+          writeList(merged);
+          updateDashboard();
+          alert("Import complete.");
+        }catch(err){
+          alert("Could not import that file.");
+        }
+      };
+      r.readAsText(f);
+    };
+    inp.click();
+  }
+
+  function clearAll(){
+    if(confirm("Clear ALL saved data on this phone?")){
+      localStorage.removeItem(KEY);
+      updateDashboard();
+      el("out").textContent = "";
+      el("outSub").textContent = "";
+    }
+  }
+
+  function startOfDay(d){
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  }
+
+  function downloadBlob(text, type, filename){
+    const blob = new Blob([text], {type});
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
+  }
+
+  function csvCell(v){
+    const s = (v === null || v === undefined) ? "" : String(v);
+    const escaped = s.replace(/"/g, '""');
+    if(/[",\n]/.test(escaped)) return `"${escaped}"`;
+    return escaped;
+  }
+
+  function escapeHtml(s){
+    return String(s).replace(/[&<>"']/g, (c)=>({
+      "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+    }[c]));
+  }
+
+  function mergeEntries(a, b){
+    const map = new Map();
+    for(const e of a){ if(e && e.id) map.set(e.id, e); }
+    for(const e of b){
+      if(!e) continue;
+      if(!e.id) e.id = cryptoRandomId();
+      if(!map.has(e.id)) map.set(e.id, e);
+    }
+    return Array.from(map.values()).sort((x,y)=>String(x.date).localeCompare(String(y.date)));
+  }
+
+  function cryptoRandomId(){
+    try{
+      const arr = new Uint8Array(8);
+      crypto.getRandomValues(arr);
+      return Array.from(arr).map(b=>b.toString(16).padStart(2,"0")).join("");
+    }catch{
+      return String(Date.now()) + "_" + Math.random().toString(16).slice(2);
+    }
+  }
+</script>
+</body>
+</html>
