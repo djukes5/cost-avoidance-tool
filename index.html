@@ -104,8 +104,14 @@
     </div>
     <div style="margin-top:10px;" id="totals"></div>
 
+    <!-- Copy/Paste friendly actions -->
     <div class="row" style="margin-top:10px;">
+      <button class="btn secondary" type="button" onclick="copyCSV()">Copy CSV</button>
       <button class="btn secondary" type="button" onclick="exportCSV()">Export CSV</button>
+    </div>
+
+    <div class="row" style="margin-top:10px;">
+      <button class="btn secondary" type="button" onclick="copySummary()">Copy Summary</button>
       <button class="btn secondary" type="button" onclick="exportJSON()">Export Backup</button>
     </div>
 
@@ -113,6 +119,9 @@
       <button class="btn secondary" type="button" onclick="importJSON()">Import Backup</button>
       <button class="btn secondary" type="button" onclick="clearAll()">Clear All Data</button>
     </div>
+
+    <label style="margin-top:12px;">Copy/Paste Output</label>
+    <textarea id="copyBox" rows="6" placeholder="Tap Copy CSV or Copy Summary. Text will appear here and attempt to copy to clipboard."></textarea>
 
     <div class="small" style="margin-top:10px;">
       Notes: Market costs are estimates/ranges. Savings are cost avoidance, not guaranteed contractor quotes.
@@ -196,19 +205,35 @@
     return Number(n).toFixed(2);
   }
 
+  // Clipboard helper (works best on https/localhost; may be restricted on file://)
+  async function copyToClipboard(text){
+    try{
+      await navigator.clipboard.writeText(text);
+      return true;
+    }catch{
+      return false;
+    }
+  }
+
   function calculateAndSave(){
     const materials = parseFloat(el("materials").value || "0");
     const hours = parseFloat(el("hours").value || "0");
     const rate = parseFloat(el("rate").value || "0");
 
-    const mLow = parseFloat(el("mLow").value || "0");
-    const mHigh = parseFloat(el("mHigh").value || "0");
+    // Guardrail: don't treat blank market fields as "$0 market"
+    const mLowRaw = el("mLow").value;
+    const mHighRaw = el("mHigh").value;
+
+    const mLow = parseFloat(mLowRaw || "0");
+    const mHigh = parseFloat(mHighRaw || "0");
 
     const actual = materials + (hours * rate);
 
-    const sLow = mLow - actual;
-    const sHigh = mHigh - actual;
-    const sTypical = (sLow + sHigh) / 2;
+    const hasMarket = (mLowRaw !== "" || mHighRaw !== "") && (mLow > 0 || mHigh > 0);
+
+    const sLow = hasMarket ? (mLow - actual) : null;
+    const sHigh = hasMarket ? (mHigh - actual) : null;
+    const sTypical = hasMarket ? ((sLow + sHigh) / 2) : 0;
 
     const entry = {
       id: cryptoRandomId(),
@@ -222,8 +247,9 @@
       actual,
       market_low: mLow,
       market_high: mHigh,
-      savings_low: sLow,
-      savings_high: sHigh,
+      // Keep numeric fields consistent for totals/history:
+      savings_low: (sLow === null ? 0 : sLow),
+      savings_high: (sHigh === null ? 0 : sHigh),
       savings_typical: sTypical,
       source_notes: el("sourceNotes").value || "",
       source_url: el("sourceUrl").value || "",
@@ -234,9 +260,15 @@
     list.push(entry);
     writeList(list);
 
-    el("out").textContent =
-      `Actual: $${money(actual)} | Savings Range: $${money(sLow)} – $${money(sHigh)} (Typical ~$${money(sTypical)})`;
-    el("outSub").textContent = "Saved to this phone. (History stays available offline.)";
+    if(hasMarket){
+      el("out").textContent =
+        `Actual: $${money(actual)} | Savings Range: $${money(sLow)} – $${money(sHigh)} (Typical ~$${money(sTypical)})`;
+      el("outSub").textContent = "Saved to this phone. (History stays available offline.)";
+    }else{
+      el("out").textContent =
+        `Actual: $${money(actual)} | Enter Market Low/High to calculate Savings Range.`;
+      el("outSub").textContent = "Saved to this phone. Add market range later to track cost avoidance.";
+    }
 
     receiptData = null;
     el("receipt").value = "";
@@ -314,6 +346,64 @@
     w.document.close();
   }
 
+  // Copy/Paste CSV instead of download
+  async function copyCSV(){
+    const list = readList();
+    if(!list.length){ alert("No data to copy."); return; }
+
+    const cols = ["date","category","desc","location","materials","hours","rate","actual","market_low","market_high","savings_low","savings_high","savings_typical","source_notes","source_url"];
+    const header = cols.join(",");
+    const rows = list.map(e => cols.map(c => csvCell(e[c])).join(","));
+    const csv = [header, ...rows].join("\n");
+
+    el("copyBox").value = csv;
+
+    const ok = await copyToClipboard(csv);
+    if(ok) alert("CSV copied to clipboard. Paste into email/Excel.");
+    else alert("CSV shown in the box. Press and hold to copy if clipboard is restricted.");
+  }
+
+  // Copy/Paste a quick boss-ready summary
+  async function copySummary(){
+    const list = readList();
+    if(!list.length){ alert("No data to summarize."); return; }
+
+    const now = new Date();
+    const startOfWeek = startOfDay(new Date(now.getFullYear(), now.getMonth(), now.getDate() - ((now.getDay()+6)%7)));
+    const startOfMonth = startOfDay(new Date(now.getFullYear(), now.getMonth(), 1));
+    const startOfYear = startOfDay(new Date(now.getFullYear(), 0, 1));
+
+    let week=0, month=0, year=0, spendMonth=0;
+
+    for(const e of list){
+      const d = startOfDay(new Date(e.date));
+      if(d >= startOfWeek) week += (e.savings_typical || 0);
+      if(d >= startOfMonth) { month += (e.savings_typical || 0); spendMonth += (e.materials || 0); }
+      if(d >= startOfYear) year += (e.savings_typical || 0);
+    }
+
+    const summary =
+`COST AVOIDANCE SUMMARY
+Entries: ${list.length}
+
+Typical Savings (Cost Avoidance):
+- This Week: $${money(week)}
+- This Month: $${money(month)}
+- This Year:  $${money(year)}
+
+Materials Spend (This Month): $${money(spendMonth)}
+
+Notes: Market costs are estimates/ranges. Savings are cost avoidance, not guaranteed contractor quotes.
+`;
+
+    el("copyBox").value = summary;
+
+    const ok = await copyToClipboard(summary);
+    if(ok) alert("Summary copied to clipboard. Paste into your email.");
+    else alert("Summary shown in the box. Press and hold to copy if clipboard is restricted.");
+  }
+
+  // Keep your existing download options too
   function exportCSV(){
     const list = readList();
     if(!list.length){ alert("No data to export."); return; }
@@ -366,6 +456,7 @@
       updateDashboard();
       el("out").textContent = "";
       el("outSub").textContent = "";
+      el("copyBox").value = "";
     }
   }
 
